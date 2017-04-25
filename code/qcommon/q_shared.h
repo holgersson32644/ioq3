@@ -26,34 +26,18 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 // q_shared.h -- included first by ALL program modules.
 // A user mod should never modify this file
 
-#ifdef STANDALONE
-  #define PRODUCT_NAME				"ioQuake3-UrT"
-  #define BASEGAME					"q3ut4"
-  #define CLIENT_WINDOW_TITLE		"UrbanTerror"
-  #define CLIENT_WINDOW_MIN_TITLE	"UrbanTerror"
-  #define HOMEPATH_NAME_UNIX		".q3a"
-  #define HOMEPATH_NAME_WIN			"Quake3"
-  #define HOMEPATH_NAME_MACOSX		HOMEPATH_NAME_WIN
-  #define GAMENAME_FOR_MASTER		"Quake3Arena"
-  #define CINEMATICS_LOGO			"idlogo.RoQ"
-  #define CINEMATICS_INTRO			"intro.RoQ"
-  #define LEGACY_PROTOCOL
-#else
-  #define PRODUCT_NAME				"ioq3"
-  #define BASEGAME					"baseq3"
-  #define CLIENT_WINDOW_TITLE		"ioquake3"
-  #define CLIENT_WINDOW_MIN_TITLE	"ioq3"
-  #define HOMEPATH_NAME_UNIX		".q3a"
-  #define HOMEPATH_NAME_WIN			"Quake3"
-  #define HOMEPATH_NAME_MACOSX		HOMEPATH_NAME_WIN
-  #define STEAMPATH_NAME			"Quake 3 Arena"
-  #define STEAMPATH_APPID			"2200"
-  #define GOGPATH_ID				"1441704920"
-  #define GAMENAME_FOR_MASTER		"Quake3Arena"
-  #define CINEMATICS_LOGO		"idlogo.RoQ"
-  #define CINEMATICS_INTRO		"intro.RoQ"
-  #define LEGACY_PROTOCOL
-#endif
+#define PRODUCT_NAME				"ioQuake3-UrT"
+#define BASEGAME					"q3ut4"
+#define CLIENT_WINDOW_TITLE		"UrbanTerror"
+#define CLIENT_WINDOW_MIN_TITLE	"UrbanTerror"
+#define HOMEPATH_NAME_UNIX		".q3a"
+#define HOMEPATH_NAME_WIN			"Quake3"
+#define HOMEPATH_NAME_MACOSX		HOMEPATH_NAME_WIN
+#define GAMENAME_FOR_MASTER		"Quake3Arena"
+#define CINEMATICS_LOGO			"idlogo.RoQ"
+#define CINEMATICS_INTRO			"intro.RoQ"
+#define LEGACY_PROTOCOL
+
 
 // Heartbeat for dpmaster protocol. You shouldn't change this unless you know what you're doing
 #define HEARTBEAT_FOR_MASTER		"DarkPlaces"
@@ -259,6 +243,9 @@ typedef int		clipHandle_t;
 #endif
 
 #define	MAX_NAME_LENGTH		32		// max length of a client name
+
+#define MAX_MAPLIST_SIZE    8       // Maximum number of maps to display upon partial name multiple match
+#define MAX_MAPLIST_STRING  8192    // Length of the string retrieved using FS_GetFileList
 
 #define	MAX_SAY_TEXT	150
 
@@ -1418,7 +1405,6 @@ typedef enum _flag_status {
 #define SAY_TEAM	1
 #define SAY_TELL	2
 
-#define CDKEY_LEN 16
 #define CDCHKSUM_LEN 2
 
 

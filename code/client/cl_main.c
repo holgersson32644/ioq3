@@ -56,9 +56,6 @@ cvar_t	*cl_nodelta;
 cvar_t	*cl_debugMove;
 
 cvar_t	*cl_noprint;
-#ifdef UPDATE_SERVER_NAME
-cvar_t	*cl_motd;
-#endif
 
 cvar_t	*rcon_client_password;
 cvar_t	*rconAddress;
@@ -106,8 +103,6 @@ cvar_t	*j_up_axis;
 
 cvar_t	*cl_activeAction;
 
-cvar_t	*cl_motdString;
-
 cvar_t	*cl_autodownload;
 cvar_t	*cl_conXOffset;
 cvar_t	*cl_inGameVideo;
@@ -123,6 +118,15 @@ cvar_t	*cl_consoleUseScanCode;
 
 cvar_t	*cl_rate;
 cvar_t  *cl_reconnectArgs;
+
+#ifdef USE_AUTH
+cvar_t  *cl_auth_engine;
+cvar_t  *cl_auth;
+cvar_t  *authc;
+cvar_t  *authl;
+#endif
+
+cvar_t	*cl_masterServers[MAX_MASTER_SERVERS];
 
 clientActive_t		cl;
 clientConnection_t	clc;
@@ -1697,125 +1701,6 @@ void CL_ForwardCommandToServer( const char *string ) {
 }
 
 /*
-===================
-CL_RequestMotd
-
-===================
-*/
-void CL_RequestMotd( void ) {
-#ifdef UPDATE_SERVER_NAME
-	char		info[MAX_INFO_STRING];
-
-	if ( !cl_motd->integer ) {
-		return;
-	}
-	Com_Printf( "Resolving %s\n", UPDATE_SERVER_NAME );
-	if ( !NET_StringToAdr( UPDATE_SERVER_NAME, &cls.updateServer, NA_IP ) ) {
-		Com_Printf( "Couldn't resolve address\n" );
-		return;
-	}
-	cls.updateServer.port = BigShort( PORT_UPDATE );
-	Com_Printf( "%s resolved to %i.%i.%i.%i:%i\n", UPDATE_SERVER_NAME,
-		cls.updateServer.ip[0], cls.updateServer.ip[1],
-		cls.updateServer.ip[2], cls.updateServer.ip[3],
-		BigShort( cls.updateServer.port ) );
-	
-	info[0] = 0;
-
-	Com_sprintf( cls.updateChallenge, sizeof( cls.updateChallenge ), "%i", ((rand() << 16) ^ rand()) ^ Com_Milliseconds());
-
-	Info_SetValueForKey( info, "challenge", cls.updateChallenge );
-	Info_SetValueForKey( info, "renderer", cls.glconfig.renderer_string );
-	Info_SetValueForKey( info, "version", com_version->string );
-
-	NET_OutOfBandPrint( NS_CLIENT, cls.updateServer, "getmotd \"%s\"\n", info );
-#endif
-}
-
-/*
-===================
-CL_RequestAuthorization
-
-Authorization server protocol
------------------------------
-
-All commands are text in Q3 out of band packets (leading 0xff 0xff 0xff 0xff).
-
-Whenever the client tries to get a challenge from the server it wants to
-connect to, it also blindly fires off a packet to the authorize server:
-
-getKeyAuthorize <challenge> <cdkey>
-
-cdkey may be "demo"
-
-
-#OLD The authorize server returns a:
-#OLD 
-#OLD keyAthorize <challenge> <accept | deny>
-#OLD 
-#OLD A client will be accepted if the cdkey is valid and it has not been used by any other IP
-#OLD address in the last 15 minutes.
-
-
-The server sends a:
-
-getIpAuthorize <challenge> <ip>
-
-The authorize server returns a:
-
-ipAuthorize <challenge> <accept | deny | demo | unknown >
-
-A client will be accepted if a valid cdkey was sent by that ip (only) in the last 15 minutes.
-If no response is received from the authorize server after two tries, the client will be let
-in anyway.
-===================
-*/
-#ifndef STANDALONE
-void CL_RequestAuthorization( void ) {
-	char	nums[64];
-	int		i, j, l;
-	cvar_t	*fs;
-
-	if ( !cls.authorizeServer.port ) {
-		Com_Printf( "Resolving %s\n", AUTHORIZE_SERVER_NAME );
-		if ( !NET_StringToAdr( AUTHORIZE_SERVER_NAME, &cls.authorizeServer, NA_IP ) ) {
-			Com_Printf( "Couldn't resolve address\n" );
-			return;
-		}
-
-		cls.authorizeServer.port = BigShort( PORT_AUTHORIZE );
-		Com_Printf( "%s resolved to %i.%i.%i.%i:%i\n", AUTHORIZE_SERVER_NAME,
-			cls.authorizeServer.ip[0], cls.authorizeServer.ip[1],
-			cls.authorizeServer.ip[2], cls.authorizeServer.ip[3],
-			BigShort( cls.authorizeServer.port ) );
-	}
-	if ( cls.authorizeServer.type == NA_BAD ) {
-		return;
-	}
-
-	// only grab the alphanumeric values from the cdkey, to avoid any dashes or spaces
-	j = 0;
-	l = strlen( cl_cdkey );
-	if ( l > 32 ) {
-		l = 32;
-	}
-	for ( i = 0 ; i < l ; i++ ) {
-		if ( ( cl_cdkey[i] >= '0' && cl_cdkey[i] <= '9' )
-				|| ( cl_cdkey[i] >= 'a' && cl_cdkey[i] <= 'z' )
-				|| ( cl_cdkey[i] >= 'A' && cl_cdkey[i] <= 'Z' )
-			 ) {
-			nums[j] = cl_cdkey[i];
-			j++;
-		}
-	}
-	nums[j] = 0;
-
-	fs = Cvar_Get ("cl_anonymous", "0", CVAR_INIT|CVAR_SYSTEMINFO );
-
-	NET_OutOfBandPrint(NS_CLIENT, cls.authorizeServer, "getKeyAuthorize %i %s", fs->integer, nums );
-}
-#endif
-/*
 ======================================================================
 
 CONSOLE COMMANDS
@@ -1904,9 +1789,6 @@ void CL_Connect_f( void ) {
 	Cvar_Set("cl_reconnectArgs", Cmd_Args());
 
 	Cvar_Set("ui_singlePlayerActive", "0");
-
-	// fire a message off to the motd server
-	CL_RequestMotd();
 
 	// clear any previous "server full" type messages
 	clc.serverMessage[0] = 0;
@@ -2627,10 +2509,6 @@ void CL_CheckForResend( void ) {
 	switch ( clc.state ) {
 	case CA_CONNECTING:
 		// requesting a challenge .. IPv6 users always get in as authorize server supports no ipv6.
-#ifndef STANDALONE
-		if (!com_standalone->integer && clc.serverAddress.type == NA_IP && !Sys_IsLANAddress( clc.serverAddress ) )
-			CL_RequestAuthorization();
-#endif
 
 		// The challenge request shall be followed by a client challenge so no malicious server can hijack this connection.
 		// Add the gamename so the server knows we're running the correct game or can reject the client
@@ -2668,38 +2546,6 @@ void CL_CheckForResend( void ) {
 	default:
 		Com_Error( ERR_FATAL, "CL_CheckForResend: bad clc.state" );
 	}
-}
-
-
-/*
-===================
-CL_MotdPacket
-
-===================
-*/
-void CL_MotdPacket( netadr_t from ) {
-#ifdef UPDATE_SERVER_NAME
-	char	*challenge;
-	char	*info;
-
-	// if not from our server, ignore it
-	if ( !NET_CompareAdr( from, cls.updateServer ) ) {
-		return;
-	}
-
-	info = Cmd_Argv(1);
-
-	// check challenge
-	challenge = Info_ValueForKey( info, "challenge" );
-	if ( strcmp( challenge, cls.updateChallenge ) ) {
-		return;
-	}
-
-	challenge = Info_ValueForKey( info, "motd" );
-
-	Q_strncpyz( cls.updateInfoString, info, sizeof( cls.updateInfoString ) );
-	Cvar_Set( "cl_motdString", challenge );
-#endif
 }
 
 /*
@@ -3032,7 +2878,6 @@ void CL_ConnectionlessPacket( netadr_t from, msg_t *msg ) {
 
 	// global MOTD from id
 	if ( !Q_stricmp(c, "motd") ) {
-		CL_MotdPacket( from );
 		return;
 	}
 
@@ -3057,6 +2902,13 @@ void CL_ConnectionlessPacket( netadr_t from, msg_t *msg ) {
 		CL_ServersResponsePacket( &from, msg, qtrue );
 		return;
 	}
+
+#ifdef USE_AUTH
+	if (strstr(c, "AUTH:CL") ) {
+		VM_Call( uivm, UI_AUTHSERVER_PACKET, from);
+		return;
+	}
+#endif
 
 	Com_DPrintf ("Unknown connectionless packet command.\n");
 }
@@ -3783,9 +3635,6 @@ void CL_Init( void ) {
 	// register our variables
 	//
 	cl_noprint = Cvar_Get( "cl_noprint", "0", 0 );
-#ifdef UPDATE_SERVER_NAME
-	cl_motd = Cvar_Get ("cl_motd", "1", 0);
-#endif
 
 	cl_timeout = Cvar_Get ("cl_timeout", "200", 0);
 
@@ -3876,8 +3725,6 @@ void CL_Init( void ) {
 	Cvar_CheckRange(j_side_axis, 0, MAX_JOYSTICK_AXIS-1, qtrue);
 	Cvar_CheckRange(j_up_axis, 0, MAX_JOYSTICK_AXIS-1, qtrue);
 
-	cl_motdString = Cvar_Get( "cl_motdString", "", CVAR_ROM );
-
 	Cvar_Get( "cl_maxPing", "800", CVAR_ARCHIVE );
 
 	cl_lanForcePackets = Cvar_Get ("cl_lanForcePackets", "1", CVAR_ARCHIVE);
@@ -3887,6 +3734,13 @@ void CL_Init( void ) {
 	// ~ and `, as keys and characters
 	cl_consoleKeys = Cvar_Get( "cl_consoleKeys", "~ ` 0x7e 0x60 0xfb", CVAR_ARCHIVE);
 	cl_consoleUseScanCode = Cvar_Get( "cl_consoleUseScanCode", "1", CVAR_ARCHIVE);
+
+#ifdef USE_AUTH
+	cl_auth_engine = Cvar_Get( "cl_auth_engine", "1", CVAR_TEMP | CVAR_ROM);
+	cl_auth = Cvar_Get("cl_auth", "0", CVAR_TEMP | CVAR_ROM);
+	authc = Cvar_Get("authc", "0", CVAR_TEMP | CVAR_USERINFO);
+	authl = Cvar_Get("authl", "", CVAR_TEMP | CVAR_USERINFO);
+#endif
 
 	// userinfo
 	Cvar_Get ("name", "UnnamedPlayer", CVAR_USERINFO | CVAR_ARCHIVE );
@@ -3925,6 +3779,13 @@ void CL_Init( void ) {
 	Cvar_Get ("cg_stereoSeparation", "0", CVAR_ROM);
 
 	cl_reconnectArgs = Cvar_Get ("cl_reconnectArgs", "", CVAR_ARCHIVE);
+
+	// Master servers
+	cl_masterServers[0] = Cvar_Get ("cl_master", MASTER_SERVER_NAME, CVAR_ARCHIVE );
+	cl_masterServers[1] = Cvar_Get ("cl_master1", MASTER_SERVER_NAME, CVAR_ARCHIVE );
+	cl_masterServers[2] = Cvar_Get ("cl_master2", MASTER2_SERVER_NAME, CVAR_ARCHIVE );
+	cl_masterServers[3] = Cvar_Get ("cl_master3", MASTER3_SERVER_NAME, CVAR_ARCHIVE );
+	cl_masterServers[4] = Cvar_Get ("cl_master4", "", CVAR_ARCHIVE );
 
 	//
 	// register our commands
@@ -4437,47 +4298,56 @@ void CL_LocalServers_f( void ) {
 CL_GlobalServers_f
 ==================
 */
-void CL_GlobalServers_f( void ) {
-	netadr_t	to;
-	int			count, i, masterNum;
-	char		command[1024], *masteraddress;
+void CL_GlobalServers_f(void) {
+
+	int			count, i, adrNum, masterNum;
+	char		command[1024];
+	static      netadr_t adr[MAX_MASTER_SERVERS];
 	
-	if ((count = Cmd_Argc()) < 3 || (masterNum = atoi(Cmd_Argv(1))) < 0 || masterNum > MAX_MASTER_SERVERS - 1)
-	{
-		Com_Printf("usage: globalservers <master# 0-%d> <protocol> [keywords]\n", MAX_MASTER_SERVERS - 1);
+	if ((count = Cmd_Argc()) < 3 || (masterNum = atoi(Cmd_Argv(1))) < 0 || masterNum > MAX_MASTER_SERVERS - 1) {
+		Com_Printf("Usage: globalservers <master# 0-%d> <protocol> [keywords]\n", MAX_MASTER_SERVERS - 1);
 		return;	
 	}
 
-	sprintf(command, "sv_master%d", masterNum + 1);
-	masteraddress = Cvar_VariableString(command);
-	
-	if(!*masteraddress)
-	{
-		Com_Printf( "CL_GlobalServers_f: Error: No master server address given.\n");
-		return;	
+	Com_Printf("Requesting servers from the master...\n");
+
+	for (adrNum = 0 ; adrNum < MAX_MASTER_SERVERS ; adrNum++) {
+
+		if (!cl_masterServers[adrNum]->string[0] ) {
+			continue;
+		}
+
+		if (cl_masterServers[adrNum]->modified) {
+			cl_masterServers[adrNum]->modified = qfalse;
+			Com_Printf("Resolving %s\n", cl_masterServers[adrNum]->string );
+			if (!NET_StringToAdr(cl_masterServers[adrNum]->string, &adr[adrNum], NA_IP)) {
+				Com_Printf("Couldn't resolve address: %s\n", cl_masterServers[adrNum]->string );
+				Cvar_Set(cl_masterServers[adrNum]->name, "");
+				continue;
+			}
+		}
+		adr[adrNum].type = NA_IP;
+		if (!strchr( cl_masterServers[adrNum]->string, ':')) {
+			adr[adrNum].port = (unsigned short) BigShort(PORT_MASTER);
+		}
+		Com_Printf("%s resolved to %i.%i.%i.%i:%i\n", cl_masterServers[adrNum]->string,
+					adr[adrNum].ip[0], adr[adrNum].ip[1], adr[adrNum].ip[2], adr[adrNum].ip[3],
+					BigShort(adr[adrNum].port));
+		break;
 	}
 
-	// reset the list, waiting for response
-	// -1 is used to distinguish a "no response"
-
-	i = NET_StringToAdr(masteraddress, &to, NA_UNSPEC);
-	
-	if(!i)
-	{
-		Com_Printf( "CL_GlobalServers_f: Error: could not resolve address of master %s\n", masteraddress);
-		return;	
+	if (adrNum >= MAX_MASTER_SERVERS) {
+		Com_Printf("No master server address could be resolved!\n");
+		return;
 	}
-	else if(i == 2)
-		to.port = BigShort(PORT_MASTER);
 
-	Com_Printf("Requesting servers from master %s...\n", masteraddress);
+	Com_Printf("Requesting servers from master %s...\n", cl_masterServers[adrNum]->string);
 
 	cls.numglobalservers = -1;
 	cls.pingUpdateSource = AS_GLOBAL;
 
 	// Use the extended query for IPv6 masters
-	if (to.type == NA_IP6 || to.type == NA_MULTICAST6)
-	{
+	if (adr[adrNum].type == NA_IP6 || adr[adrNum].type == NA_MULTICAST6) {
 		int v4enabled = Cvar_VariableIntegerValue("net_enabled") & NET_ENABLEV4;
 		
 		if(v4enabled)
@@ -4504,7 +4374,7 @@ void CL_GlobalServers_f( void ) {
 		Q_strcat(command, sizeof(command), Cmd_Argv(i));
 	}
 
-	NET_OutOfBandPrint( NS_SERVER, to, "%s", command );
+	NET_OutOfBandPrint(NS_SERVER, adr[adrNum], "%s", command);
 }
 
 
@@ -4880,72 +4750,4 @@ CL_ShowIP_f
 */
 void CL_ShowIP_f(void) {
 	Sys_ShowIP();
-}
-
-/*
-=================
-CL_CDKeyValidate
-=================
-*/
-qboolean CL_CDKeyValidate( const char *key, const char *checksum ) {
-#ifdef STANDALONE
-	return qtrue;
-#else
-	char	ch;
-	byte	sum;
-	char	chs[3];
-	int i, len;
-
-	len = strlen(key);
-	if( len != CDKEY_LEN ) {
-		return qfalse;
-	}
-
-	if( checksum && strlen( checksum ) != CDCHKSUM_LEN ) {
-		return qfalse;
-	}
-
-	sum = 0;
-	// for loop gets rid of conditional assignment warning
-	for (i = 0; i < len; i++) {
-		ch = *key++;
-		if (ch>='a' && ch<='z') {
-			ch -= 32;
-		}
-		switch( ch ) {
-		case '2':
-		case '3':
-		case '7':
-		case 'A':
-		case 'B':
-		case 'C':
-		case 'D':
-		case 'G':
-		case 'H':
-		case 'J':
-		case 'L':
-		case 'P':
-		case 'R':
-		case 'S':
-		case 'T':
-		case 'W':
-			sum += ch;
-			continue;
-		default:
-			return qfalse;
-		}
-	}
-
-	sprintf(chs, "%02x", sum);
-	
-	if (checksum && !Q_stricmp(chs, checksum)) {
-		return qtrue;
-	}
-
-	if (!checksum) {
-		return qtrue;
-	}
-
-	return qfalse;
-#endif
 }

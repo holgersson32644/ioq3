@@ -11,9 +11,6 @@ ifeq ($(COMPILE_PLATFORM),sunos)
   COMPILE_ARCH=$(shell uname -p | sed -e 's/i.86/x86/')
 endif
 
-ifndef BUILD_STANDALONE
-  BUILD_STANDALONE =1
-endif
 ifndef BUILD_CLIENT
   BUILD_CLIENT     =
 endif
@@ -210,6 +207,10 @@ endif
 
 ifndef USE_DEMO_FORMAT_42
   USE_DEMO_FORMAT_42=1
+endif
+
+ifndef USE_AUTH
+  USE_AUTH=1
 endif
 
 ifndef USE_ALTGAMMA
@@ -1015,6 +1016,11 @@ ifeq ("$(CC)", $(findstring "$(CC)", "clang" "clang++"))
 endif
 
 #Barbatos
+ifeq ($(USE_AUTH),1)
+  BASE_CFLAGS += -DUSE_AUTH=1
+endif
+
+#Barbatos
 ifeq ($(USE_DEMO_FORMAT_42),1)
   BASE_CFLAGS += -DUSE_DEMO_FORMAT_42=1
 endif
@@ -1025,10 +1031,6 @@ endif
 
 ifeq ($(USE_LOCAL_HEADERS),1)
   BASE_CFLAGS += -DUSE_LOCAL_HEADERS
-endif
-
-ifeq ($(BUILD_STANDALONE),1)
-  BASE_CFLAGS += -DSTANDALONE
 endif
 
 ifeq ($(GENERATE_DEPENDENCIES),1)

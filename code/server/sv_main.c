@@ -58,9 +58,6 @@ cvar_t	*sv_extraPure;
 cvar_t	*sv_extraPaks;
 cvar_t	*sv_floodProtect;
 cvar_t	*sv_lanForceRate; // dedicated 1 (LAN) server forces local client rates to 99999 (bug #491)
-#ifndef STANDALONE
-cvar_t	*sv_strictAuth;
-#endif
 cvar_t	*sv_banFile;
 cvar_t	*sv_clientsPerIp;
 
@@ -72,6 +69,11 @@ cvar_t 	*sv_demofolder;				//@Barbatos - the name of the folder that contains se
 cvar_t	*sv_demonotice;		// notice to print to a client being recorded server-side
 cvar_t  *sv_tellprefix;
 cvar_t  *sv_sayprefix;
+
+#ifdef USE_AUTH
+cvar_t	*sv_authServerIP;
+cvar_t	*sv_auth_engine;
+#endif
 
 /*
 =============================================================================
@@ -265,6 +267,10 @@ void SV_MasterHeartbeat(const char *message)
 
 	svs.nextHeartbeatTime = svs.time + HEARTBEAT_MSEC;
 
+#ifdef USE_AUTH
+	VM_Call( gvm, GAME_AUTHSERVER_HEARTBEAT );
+#endif
+
 	// send to group masters
 	for (i = 0; i < MAX_MASTER_SERVERS; i++)
 	{
@@ -354,6 +360,11 @@ void SV_MasterShutdown( void ) {
 
 	// when the master tries to poll the server, it won't respond, so
 	// it will be removed from the list
+
+#ifdef USE_AUTH
+	VM_Call( gvm, GAME_AUTHSERVER_SHUTDOWN );
+#endif
+
 }
 
 
@@ -670,7 +681,14 @@ void SVC_Info( netadr_t from ) {
 		va("%i", sv_maxclients->integer - sv_privateClients->integer ) );
 	Info_SetValueForKey( infostring, "gametype", va("%i", sv_gametype->integer ) );
 	Info_SetValueForKey( infostring, "pure", va("%i", sv_pure->integer ) );
-	Info_SetValueForKey(infostring, "g_needpass", va("%d", Cvar_VariableIntegerValue("g_needpass")));
+
+	// UrT checks for "password" instead of "g_needpass"
+	if (Cvar_VariableValue("g_needpass") == 1)
+		Info_SetValueForKey(infostring, "password", "1");
+
+#ifdef USE_AUTH
+	Info_SetValueForKey( infostring, "auth", Cvar_VariableString("auth") );
+#endif
 
 #ifdef USE_VOIP
 	if (sv_voipProtocol->string && *sv_voipProtocol->string) {
@@ -688,6 +706,8 @@ void SVC_Info( netadr_t from ) {
 	if( *gamedir ) {
 		Info_SetValueForKey( infostring, "game", gamedir );
 	}
+
+	Info_SetValueForKey(infostring, "modversion", Cvar_VariableString("g_modversion"));
 
 	NET_OutOfBandPrint( NS_SERVER, from, "infoResponse\n%s", infostring );
 }
@@ -790,6 +810,9 @@ connectionless packets.
 static void SV_ConnectionlessPacket( netadr_t from, msg_t *msg ) {
 	char	*s;
 	char	*c;
+#ifdef USE_AUTH
+	netadr_t	authServerIP;
+#endif
 
 	MSG_BeginReadingOOB( msg );
 	MSG_ReadLong( msg );		// skip the -1 marker
@@ -812,9 +835,14 @@ static void SV_ConnectionlessPacket( netadr_t from, msg_t *msg ) {
 		SV_GetChallenge(from);
 	} else if (!Q_stricmp(c, "connect")) {
 		SV_DirectConnect( from );
-#ifndef STANDALONE
-	} else if (!Q_stricmp(c, "ipAuthorize")) {
-		SV_AuthorizeIpPacket( from );
+#ifdef USE_AUTH
+	} else if ((!Q_stricmp(c, "AUTH:SV"))) {
+		NET_StringToAdr(sv_authServerIP->string, &authServerIP, NA_IP);
+		if (!NET_CompareBaseAdr(from, authServerIP)) {
+			Com_Printf("AUTH not from the Auth Server!\n");
+			return;
+		}
+		VM_Call(gvm, GAME_AUTHSERVER_PACKET);
 #endif
 	} else if (!Q_stricmp(c, "rcon")) {
 		SVC_RemoteCommand( from, msg );
